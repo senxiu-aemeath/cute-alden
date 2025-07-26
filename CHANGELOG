@@ -1,0 +1,20 @@
+2025-06-23  Matthew Skala  <mskala@ansuz.sooke.bc.ca>
+
+	* configure.ac: check for pipe2
+	* alden.c: use pipe if there is no pipe2, fix bug where foreground
+	would wait for a server when not running client, implement
+	runtime-adjustable buffer sizes, add --list option
+	* alden.1.in: document new options
+
+2025-06-16  Matthew Skala  <mskala@ansuz.sooke.bc.ca>
+
+	* Makefile.am, configure.am:  remove font exception from license,
+	which was only there because of a cut-and-paste mistake anyway
+
+2025-06-11  Matthew Skala  <mskala@ansuz.sooke.bc.ca>
+
+	* alden.c:  add -i, --pid option for specifying which server to use
+
+2025-06-11  Matthew Skala  <mskala@ansuz.sooke.bc.ca>
+
+	* First released version (0.1)
