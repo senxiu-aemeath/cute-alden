@@ -1,0 +1,345 @@
+.\" Modified for the cute-alden fork on 2026-04-21.
+.\" See the repository README.md and CHANGELOG for downstream changes.
+.TH CUTE-ALDEN 1 "@release_date@" "@PACKAGE_STRING@" "User Commands"
+.SH NAME
+@PACKAGE@ \- detachable terminal sessions without breaking scrollback
+.
+.SH SYNOPSIS
+.B @PACKAGE@
+.RI [ OPTIONS .\|.\|.\|]
+.RB [ \-\-
+.IR "SHELL " [ SHELLOPTS .\|.\|.\|]]
+.
+.SH DESCRIPTION
+.PP
+The
+.B @PACKAGE@
+program allows a long-running terminal-based process to survive when the
+user's connection disappears, and allows the user to subsequently reconnect
+to the surviving process.  Unlike other systems that serve a similar
+purpose,
+.B @PACKAGE@
+passes the connection transparently.  It is not a terminal emulator
+itself, and it does not interfere with, nor attempt to replace,
+the scrollback features built into GUI terminal emulators.
+.PP
+A user who freshly invokes
+.B @PACKAGE@
+at the command line will be presented with the command prompt of a new
+shell.  The user can proceed to use this shell normally, just like the original
+shell, save perhaps that the shell inside
+.B @PACKAGE@
+will not by default be a login shell.  Upon exit, the user will be
+returned to the original shell.
+.PP
+The difference from simply running a new shell is that if the user's
+connection to the host is broken (that is, if the
+.B @PACKAGE@
+client is killed, for instance by
+.BR SIGHUP ), 
+the shell will not be killed.  It will remain alive in a detached state.
+Whatever may have been running inside that
+shell can also continue running, and its output will be buffered.
+Then if the user logs back in and runs
+.B @PACKAGE@
+again, instead of starting a new shell,
+.B @PACKAGE@
+will reconnect to the detached shell.
+.SS In more detail,
+.PP
+.B @PACKAGE@
+has a straightforward client-server architecture.  Users interact with
+clients, which connect to servers, which contain shells.  In normal
+operation, the client and server are invisible and the user has
+the same experience as if using the shell directly.
+.PP
+Upon invocation, the
+.B @PACKAGE@
+command-line program typically does, or attempts, four things.  This
+sequence of steps can be modified by command-line options.
+.IP 1. 4
+It attempts to verify that it is not running inside an existing
+.B @PACKAGE@
+session; nesting sessions is usually undesirable.
+.IP 2. 4
+It searches for a detached
+.B @PACKAGE@
+server: one started by the current user 
+and not currently in use by some other client.
+.IP 3. 4
+If no usable server was found, it starts a new server, containing a new
+shell.
+.IP 4. 4
+It starts a new client, connected to the server it found or started.
+.PP
+The client forwards subsequent keystrokes transparently through the server to
+the shell, and returns the shell's output back to the user.  Terminal window
+size changes also pass through the client-server connection to the shell.
+.PP
+If and when the shell exits, the server exits.  If and when the server exits,
+the client exits.  In normal operation, when the user exits the shell, the
+server and client will exit accordingly.  But if the client dies other than
+at the behest of the server, then the server and shell continue to
+run in a detached state.  Output from the shell is buffered in the server
+while detached.  When the user runs
+.B @PACKAGE@
+again, it will find and re-connect to the detached server.  The buffered
+output will then be dumped to the user's new terminal connection, and the
+user can continue using the shell.
+.SS Which shell?
+.PP
+When starting a new server with a shell inside it,
+.B @PACKAGE@
+will by default use the value of the
+.B SHELL
+environment variable, and will simply execute that path with no command-line
+arguments of its own, with the effect that the shell will
+.I not
+start as a login shell.  The
+.I .profile
+and similar login-related scripts will not run, and on a typical Linux
+installation, things like
+.I ls
+colours will not work.
+.PP
+The
+.B \-l
+or
+.B \-\-login-shell
+options select a login shell instead.  Running
+.B @PACKAGE@
+with a single hyphen as a command-line argument, as in
+.BR "@PACKAGE@ \-" ,
+will do the same.  The request to the shell that it should be a login shell
+is communicated by passing it an
+.I argv[0]
+value beginning with
+.BR \- .
+.PP
+Non-option arguments other than
+.B \-
+will be taken as the name of the shell to run followed by arguments to give
+to it; and as usual,
+.B \-\-
+signals the end of options for
+.BR @PACKAGE@ ,
+allowing the specification of arguments for the shell that otherwise would
+look like
+.B @PACKAGE@
+options.  For example,
+.B "@PACKAGE@ \-\- /bin/foosh \-bar"
+runs the shell
+.B /bin/foosh
+with the argument
+.BR \-bar,
+without generating a complaint from
+.B @PACKAGE@
+that
+.B \-bar
+is not a valid
+.B @PACKAGE@
+option argument.
+.PP
+In the unlikely event that there is no
+.B SHELL
+environment variable defined,
+.B @PACKAGE@
+will fall back on the hardcoded path \*(lq/bin/sh\*(rq.
+.SS Buffering
+.PP
+There are some complexities to the handling of buffered output.
+Communication between the client and server passes through \*(lqnamed
+pipes,\*(rq which include buffers of their own.  On at least some Linux
+installations, the named-pipe buffers can hold 64K, but this may vary
+depending on the operating system, version, and local configuration.
+The buffer in the
+.B @PACKAGE@
+server will not start to fill until the pipe buffer is full.
+Then the server's buffer may also have a limited capacity (approximately 1M
+by default, possibly adjustable by means of command line options).
+If that fills too, while the server is detached and the software inside the
+server is continuing to generate output, then (again, in the default
+configuration) the server will start discarding data at the head of its
+buffer.
+So a user who reconnects after a long absence during which some output
+was discarded might typically be
+presented with the first 64K of output they missed, followed by the last 1M
+of output, with a gap in between.  In the motivating case of a detached program
+that is running more or less autonomously and writing an infinte scroll of
+\*(lqlog\*(rq information to the terminal, this behaviour is what's desired:
+it allows the user to read a decent amount of scrollback, without allowing the
+server's memory requirements to grow in an unlimited way nor requiring the
+underlying software to stop and wait for the user to reconnect.
+.PP
+If the client died in a reasonably graceful way, and a new client rejoins
+the detached server before the buffers fill, then there should be no data
+lost at all.  Really guaranteeing that may not be possible in an ungraceful
+situation of network or power loss, however.  And even if no bytes are lost,
+software that depends on terminal features to partially repaint the screen
+(as with
+.IR ncurses )
+may end up producing a corrupted display after an interruption.  In many
+such packages, it is possible to request a full screen redraw by pressing
+.I ^R
+or
+.IR ^L .
+.SS Nesting and multiple sessions
+.PP
+It is perfectly possible for the same user to have multiple
+.B @PACKAGE@
+clients and servers active at the same time, but in the event there is more
+than one detached server, the order in which new invocations of
+.B @PACKAGE@
+will pick them up is unspecified by default.
+.PP
+By default
+.B @PACKAGE@
+checks whether it is being run inside an existing
+.B @PACKAGE@
+session and will refuse to create a nested session.  That check is
+especially important because in normal operation, a user who types
+.B @PACKAGE@
+at a shell prompt may just see another shell prompt immediately, not
+realize that anything has actually happened, and be inclined to try again.
+However,
+the
+.B \-N
+option will override this check and allow creation of nested sessions
+to arbitrary depth.  It is even possible to create a looped session
+by starting a new client with
+.B \-N
+inside a server that is already detached; if no other detached servers exist
+at the time, the new client will connect to the server that contains itself.
+If somehow some output is also introduced into the loop, then the client and
+server will soak up CPU time passing the data around as fast as possible,
+indefinitely.
+Resolving such a situation requires manually killing one of the processes
+involved.
+.SS Name
+.PP
+The name of this package refers to the character of John Alden in
+.I The Courtship of Miles Standish
+by Henry Wadsworth Longfellow.
+.
+.SH OPTIONS
+.TP
+.BI "\-B " "N\fR,\fP " "\-\-buffer-size " N
+Set the size of each buffer to
+.I N
+bytes.  Default is 32768, and it is rarely useful to change this.
+.TP
+.BI "\-D " "N\fR,\fP " "\-\-down-buffers " N
+Allow up to
+.I N
+buffers on the server in the downward (user to shell) direction.  Default is
+32, which with the default buffer size means about 1M of data can be
+buffered at a time.  Set negative to allow unlimited buffering; otherwise,
+when the buffer is full in the downward direction, the server will stop
+accepting data, forcing other parts of the system to buffer if they can.
+.TP
+.BR \-N ", " \-\-allow-nesting
+Disable the initial check for whether
+.B @PACKAGE@
+is running inside an existing session, thus allowing the creation of nested
+sessions.
+.TP
+.BI "\-R " "N\fR,\fP " "\-\-read-size " N
+Set the number of bytes to read (in either direction) on each attempt,
+default 4096.  Larger numbers may be faster when handling a lot
+of data, but because a new buffer is started whenever the server cannot
+guarantee the entire read will fit in an existing buffer, smaller numbers
+will result in more effective use of memory.
+.TP
+.BI "\-U " "N\fR,\fP " "\-\-up-buffers " N
+Allow up to
+.I N
+buffers on the server in the upward (shell to user) direction.  Default is
+32, which with the default buffer size means about 1M of data can be
+buffered at a time.  Set negative to allow unlimited buffering (which can be
+dangerous!); otherwise, when the buffer is full in the upward direction, the server will start
+throwing away the oldest buffered data, resulting in a skip when the client
+reconnects or starts reading again.
+.TP
+.BR \-V ", " \-\-version
+Display a brief message identifying the version and license terms of the
+software.  Using
+.B \-V
+or
+.B \-h
+causes the program to exit after displaying the associated message(s),
+without doing anything else.
+.TP
+.BR \-h ", " \-\-help
+Display a list of available command line options.  Using
+.B \-V
+or
+.B \-h
+causes the program to exit after displaying the associated message(s),
+without doing anything else.
+.TP
+.BI "\-i " "N\fR,\fP " "\-\-pid " N
+Connect to a server with process ID
+.IR N .
+This option works by overriding the usual search to only look at the
+specified process ID, and it automatically has the effect of setting
+.BR \-\-reconnect .
+.TP
+.BR \-l ", " \-\-login-shell ", " \-
+When starting a server (and only if starting a server), run the shell as a
+login shell.
+.TP
+.BR \-n ", " \-\-new-server ", " \-\-no-search
+Disable the search for an existing server; then (unless this other step
+is also disabled) the program will necessarily start a new server.
+.TP
+.BR \-r ", " \-\-reconnect
+Disable starting a new server; then the program must reconnect to an existing
+detached server, or fail.
+.TP
+.BR \-s ", " \-\-server-only
+Disable starting a client; the server (if one is started) will remain
+detached, ready for later connections.  This option has the effect of setting
+.BR \-\-no-search ,
+because there is no use finding an existing server if we won't connect to
+it.  The PID of the server that was started, will be written to standard
+out.
+.TP
+.BR \-v ", " \-\-verbose
+Report detailed progress messages to standard error.
+.TP
+.B \-\-list
+Find all available servers and write their PIDs to standard out, then exit
+without doing other steps.
+Servers with currently-attached clients are not listed.
+.
+.SH ENVIRONMENT
+.IP SHELL
+This is the shell that will be started inside a newly-started
+.B @PACKAGE@
+server.
+.
+.SH AUTHOR
+Matthew Skala <mskala@ansuz.sooke.bc.ca>
+.
+.SH COPYRIGHT
+Copyright \(co
+2025
+Matthew Skala
+.PP
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3.
+.PP
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU General Public License for more details.
+.PP
+You should have received a copy of the GNU General Public License
+along with this program.
+If not, see <http://www.gnu.org/licenses/>.
+.
+.SH "SEE ALSO"
+.BR mosh (1),
+.BR screen (1),
+.BR tmux (1)

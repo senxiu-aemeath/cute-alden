@@ -1,4 +1,4 @@
-senxiu <75778903+senxiu-aemeath@users.noreply.github.com>
+2026-04-21  senxiu <75778903+senxiu-aemeath@users.noreply.github.com>
 
 	* cute-alden-0.2/alden.c: harden local session discovery and
 	attachment checks, add named sessions, rename support, explicit
